@@ -1,0 +1,17 @@
+# Exclude personal notes
+bosch_assignment_analysis.md
+claude.md
+
+# STM32CubeIDE build artifacts
+03_BEA_BasicConfiguredSourceCode/Debug/
+03_BEA_BasicConfiguredSourceCode/Release/
+
+# Python cache
+__pycache__/
+*.pyc
+*.log
+
+# IDE / OS
+.vscode/
+.settings/
+*.su

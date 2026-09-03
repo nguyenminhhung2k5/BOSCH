@@ -1,0 +1,35 @@
+"""Application configuration constants."""
+
+from .constants import (
+    APP_NAME,
+    APP_VERSION,
+    BAUD_RATES,
+    COMMAND_HISTORY_LIMIT,
+    DATA_FORMATS,
+    DEFAULT_BAUD_RATE,
+    DEFAULT_DATA_FORMAT,
+    DEFAULT_LINE_ENDING,
+    DID_OPTIONS,
+    END_OF_FRAME,
+    LINE_ENDINGS,
+    LOG_FILE_PATH,
+    REQUIRED_PYTHON,
+    START_OF_FRAME,
+)
+
+__all__ = [
+    "APP_NAME",
+    "APP_VERSION",
+    "BAUD_RATES",
+    "COMMAND_HISTORY_LIMIT",
+    "DATA_FORMATS",
+    "DEFAULT_BAUD_RATE",
+    "DEFAULT_DATA_FORMAT",
+    "DEFAULT_LINE_ENDING",
+    "DID_OPTIONS",
+    "END_OF_FRAME",
+    "LINE_ENDINGS",
+    "LOG_FILE_PATH",
+    "REQUIRED_PYTHON",
+    "START_OF_FRAME",
+]

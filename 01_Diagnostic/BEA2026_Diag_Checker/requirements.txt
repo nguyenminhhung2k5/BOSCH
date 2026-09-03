@@ -1,0 +1,2 @@
+# Runtime: C:\toolbase\python\3.12.13.1\python.exe
+pyserial>=3.5
