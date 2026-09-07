@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Buffer
+try:
+    from collections.abc import Buffer
+except ImportError:
+    Buffer = (bytes, bytearray, memoryview)
 
 from ..exceptions import InvalidDiagnosticRequestError
 

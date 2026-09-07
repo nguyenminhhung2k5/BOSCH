@@ -88,6 +88,7 @@ class BEADiagChecker:
             on_connection_lost=self._schedule_connection_lost,
         )
         self.diagnostic_manager = DiagnosticManager(self.serial_manager, self.logger)
+        self._last_calculated_key: bytes | None = None
 
         self.colors = configure_styles(self.root)
         self._create_widgets()
@@ -386,6 +387,25 @@ class BEADiagChecker:
             self.log_terminal.insert(tk.END, message + "\n", tag)
         else:
             self.log_terminal.insert(tk.END, message + "\n")
+
+        # Tự động trích xuất SEED và tính toán KEY khi nhận được phản hồi 67 01
+        if "RX: [Hex]" in message and "67 01" in message:
+            try:
+                parts = message.split("RX: [Hex]")[-1].strip().split()
+                if "67" in parts and "01" in parts:
+                    idx = parts.index("67")
+                    if idx + 1 < len(parts) and parts[idx + 1] == "01":
+                        seed_hex = parts[idx + 2 : idx + 6]
+                        if len(seed_hex) == 4:
+                            seed = [int(b, 16) for b in seed_hex]
+                            k0 = seed[0] ^ seed[1]
+                            k1 = (seed[1] + seed[2]) & 0xFF
+                            k2 = seed[2] ^ seed[3]
+                            k3 = (seed[3] + seed[0]) & 0xFF
+                            self._last_calculated_key = bytes([k0, k1, k2, k3])
+            except Exception:
+                pass
+
         if self.autoscroll_var.get():
             self.log_terminal.see(tk.END)
         self.log_terminal.configure(state="disabled")
@@ -578,12 +598,21 @@ class BEADiagChecker:
             self.logger.error("Read DID failed: %s", exc)
 
     def send_key(self) -> None:
-        """Reserved callback for the Security Access Send Key action.
+        """Send Key callback: calculates and sends key based on received seed."""
+        if not self._last_calculated_key:
+            self.logger.warning("No Seed received yet! Click 'Request Seed' first.")
+            return
 
-        Replace this method body with the BEA-specific key calculation/send
-        flow.
-        """
-        self.logger.info("Send Key callback is reserved for implementation.")
+        try:
+            req_data = bytes([0x02]) + self._last_calculated_key
+            self.diagnostic_manager.process(
+                "0x27",
+                req_data,
+                data_format=self.data_format_var.get(),
+            )
+            self.logger.info("Sent Key: %s", self._last_calculated_key.hex(" ").upper())
+        except (DiagnosticManagerError, SerialManagerError) as exc:
+            self.logger.error("Send Key failed: %s", exc)
 
     def read_did(self) -> None:
         """Build and send a UDS Read DID request through service 0x22.
