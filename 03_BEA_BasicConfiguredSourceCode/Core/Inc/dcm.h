@@ -62,8 +62,23 @@ void Dcm_ApplyIgnitionCycle(void);
 void Dcm_SendUDSResponseUART(const uint8_t *respPayload, uint16_t respLen);
 
 /**
- * @brief Đóng gói và phát bản tin CAN chẩn đoán (ID 0x712 hoặc 0x7A2)
+ * @brief Đóng gói và phát bản tin CAN chẩn đoán qua hcan1 hoặc hcan2 (ID 0x712 hoặc 0x7A2)
  */
-void Dcm_SendUDSCanFrame(uint32_t canId, const uint8_t *payload, uint16_t len);
+void Dcm_SendUDSCanFrame(CAN_HandleTypeDef *hcan, uint32_t canId, const uint8_t *payload, uint16_t len);
+
+/**
+ * @brief Được gọi từ ngắt CAN2_RX0 khi nhận được UDS Request (ID 0x712)
+ */
+void Dcm_OnCAN2RequestReceived(const uint8_t *canData, uint8_t dlc);
+
+/**
+ * @brief Được gọi từ ngắt CAN1_RX0 khi nhận được UDS Response (ID 0x7A2)
+ */
+void Dcm_OnCAN1ResponseReceived(const uint8_t *canData, uint8_t dlc);
+
+/**
+ * @brief Kiểm tra xem có giao dịch UDS đang chờ phản hồi không (để tránh xung đột UART)
+ */
+uint8_t Dcm_IsDiagActive(void);
 
 #endif /* _DCM_H */

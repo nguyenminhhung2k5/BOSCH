@@ -12,7 +12,7 @@
 #define DCM_SECA_SUBFUNC_SEND_KEY       0x02
 
 /* Security Timeout Settings */
-#define DCM_SECA_UNLOCK_TIMEOUT_MS      5000   /* Mở khoá trong 5 giây */
+#define DCM_SECA_UNLOCK_TIMEOUT_MS      15000   /* Mở khoá trong 5 giây */
 #define DCM_SECA_PENALTY_DELAY_MS       10000  /* Khóa phạt 10 giây nếu nhập sai key */
 
 /**

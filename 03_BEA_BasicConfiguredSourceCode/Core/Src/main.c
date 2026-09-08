@@ -51,7 +51,6 @@ UART_HandleTypeDef huart3;
 /* USER CODE BEGIN PV */
 uint8_t uart3_receive;
 
-CAN_HandleTypeDef hcan1;
 CAN_HandleTypeDef hcan2;
 CAN_TxHeaderTypeDef CAN1_pHeader;
 CAN_RxHeaderTypeDef CAN1_pHeaderRx;
@@ -86,6 +85,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_CAN1_Init(void);
+static void MX_CAN2_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
@@ -179,8 +179,9 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_CAN1_Init();
   MX_USART3_UART_Init();
+  MX_CAN1_Init();
+  MX_CAN2_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   MX_CAN1_Setup();
@@ -194,6 +195,7 @@ int main(void)
   /* Khởi tạo màn hình LCD 2.8 inch và giao diện giám sát CAN Monitor */
   LCD_Init();
   LCD_Init_UI();
+  LCD_Switch_To_CAN2(); /* Khôi phục chân PB6 về CAN2_TX sau khi LCD_Init cấu hình làm LCD_BL */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -225,15 +227,18 @@ int main(void)
         latest_node2_val0 = CAN1_DATA_RX[0];
         latest_node2_val1 = CAN1_DATA_RX[1];
 
-        /* In log bản tin 0A2 vừa nhận ra UART */
-        PrintCANLog(CAN1_pHeaderRx.StdId, CAN1_DATA_RX);
+        /* In log bản tin 0A2 vừa nhận ra UART (chỉ in khi không có phiên chẩn đoán UDS) */
+        if (!Dcm_IsDiagActive())
+        {
+          PrintCANLog(CAN1_pHeaderRx.StdId, CAN1_DATA_RX);
+        }
 
         /* Cập nhật LCD giãn cách để không làm trễ chu kỳ phát 50ms của CAN */
         static uint32_t last_lcd_rx_time = 0;
         if (TimeStamp - last_lcd_rx_time >= 100)
         {
           last_lcd_rx_time = TimeStamp;
-          LCD_DisplayCANLog(CAN1_pHeaderRx.StdId, CAN1_DATA_RX, 1);
+          //LCD_DisplayCANLog(CAN1_pHeaderRx.StdId, CAN1_DATA_RX, 1);
         }
       }
     }
@@ -272,8 +277,9 @@ int main(void)
       /* Cập nhật Rolling Counter */
       node1_tx_counter = (node1_tx_counter + 1) & 0x0F;
 
-      /* In log bản tin 012 vừa gửi ra UART */
-      PrintCANLog(CAN1_pHeader.StdId, CAN1_DATA_TX);
+      /* In log bản tin 012: Tạm tắt in ra UART mỗi 50ms để không làm rác/lag terminal của tool chẩn đoán BEA_DiagChecker.
+       * (Dữ liệu giao tiếp CAN vẫn được phát đều đặn mỗi 50ms qua CAN1 và hiển thị trên màn hình LCD) */
+      /* PrintCANLog(CAN1_pHeader.StdId, CAN1_DATA_TX); */
 
       /* Cập nhật LCD giãn cách */
       static uint32_t last_lcd_tx_time = 0;
@@ -424,7 +430,7 @@ static void MX_CAN1_Init(void)
   hcan1.Init.TimeSeg1 = CAN_BS1_10TQ;
   hcan1.Init.TimeSeg2 = CAN_BS2_3TQ;
   hcan1.Init.TimeTriggeredMode = DISABLE;
-  hcan1.Init.AutoBusOff = DISABLE;
+  hcan1.Init.AutoBusOff = ENABLE;
   hcan1.Init.AutoWakeUp = DISABLE;
   hcan1.Init.AutoRetransmission = DISABLE;
   hcan1.Init.ReceiveFifoLocked = DISABLE;
@@ -437,6 +443,31 @@ static void MX_CAN1_Init(void)
 
   /* USER CODE END CAN1_Init 2 */
 
+}
+
+/**
+  * @brief CAN2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN2_Init(void)
+{
+  hcan2.Instance = CAN2;
+  hcan2.Init.Prescaler = 6;
+  hcan2.Init.Mode = CAN_MODE_NORMAL;
+  hcan2.Init.SyncJumpWidth = CAN_SJW_2TQ;
+  hcan2.Init.TimeSeg1 = CAN_BS1_10TQ;
+  hcan2.Init.TimeSeg2 = CAN_BS2_3TQ;
+  hcan2.Init.TimeTriggeredMode = DISABLE;
+  hcan2.Init.AutoBusOff = ENABLE;
+  hcan2.Init.AutoWakeUp = DISABLE;
+  hcan2.Init.AutoRetransmission = DISABLE;
+  hcan2.Init.ReceiveFifoLocked = DISABLE;
+  hcan2.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan2) != HAL_OK)
+  {
+    USART3_SendString((uint8_t *)"[ERR] HAL_CAN_Init CAN2 failed!\r\n");
+  }
 }
 
 /**
@@ -603,9 +634,12 @@ void MX_CAN2_Setup()
     USART3_SendString((uint8_t *)"[BOOT] Setting up CAN2...\r\n");
 
     /* Dừng CAN2 trước nếu đang chạy */
-    HAL_CAN_Stop(&hcan2);
+    if (hcan2.State == HAL_CAN_STATE_LISTENING)
+    {
+        HAL_CAN_Stop(&hcan2);
+    }
 
-    /* Cấu hình Bộ lọc Filter cho CAN2 */
+    /* Cấu hình Bộ lọc Filter cho CAN2 (Bank 14..27) trên CAN1 master */
     CAN2_sFilterConfig.FilterBank = 14;                     // Filter bank cho CAN2 bắt đầu từ 14
     CAN2_sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
     CAN2_sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
@@ -617,7 +651,8 @@ void MX_CAN2_Setup()
     CAN2_sFilterConfig.FilterActivation = CAN_FILTER_ENABLE;
     CAN2_sFilterConfig.SlaveStartFilterBank = 14;
 
-    if (HAL_CAN_ConfigFilter(&hcan2, &CAN2_sFilterConfig) != HAL_OK)
+    /* Trong STM32F4 Dual-CAN, tất cả filter banks đều được cấu hình qua CAN1 */
+    if (HAL_CAN_ConfigFilter(&hcan1, &CAN2_sFilterConfig) != HAL_OK)
     {
         USART3_SendString((uint8_t *)"[ERR] CAN2 Filter Config Failed!\r\n");
     }
@@ -632,15 +667,15 @@ void MX_CAN2_Setup()
         USART3_SendString((uint8_t *)"[ERR] CAN2 ActivateNotification Failed!\r\n");
     }
 
-    /* Cấu hình TX Header CAN2 */
-    CAN2_pHeader.StdId = 0x0A2;
+    /* Cấu hình TX Header CAN2: Simulated ECU 2 phản hồi chẩn đoán 0x7A2 */
+    CAN2_pHeader.StdId = DCM_DIAG_CAN_RESP_ID;
     CAN2_pHeader.ExtId = 0x00;
     CAN2_pHeader.IDE = CAN_ID_STD;
     CAN2_pHeader.RTR = CAN_RTR_DATA;
     CAN2_pHeader.DLC = 8;
     CAN2_pHeader.TransmitGlobalTime = DISABLE;
 
-    USART3_SendString((uint8_t *)"[BOOT] CAN2 Setup OK!\r\n");
+    USART3_SendString((uint8_t *)"[BOOT] CAN2 Setup OK (Diagnostic ECU 2 Node)!\r\n");
 }
 
 void USART3_SendString(uint8_t *ch)
