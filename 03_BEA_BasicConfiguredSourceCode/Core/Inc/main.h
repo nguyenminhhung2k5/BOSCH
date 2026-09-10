@@ -46,6 +46,11 @@ extern "C" {
 #define BtnM HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13)
 #define BtnU HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1)
 
+#define IGNITION_BTN_Pin        GPIO_PIN_1
+#define IGNITION_BTN_GPIO_Port  GPIOA
+#define LED0_Pin                GPIO_PIN_0
+#define LED0_GPIO_Port          GPIOB
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -94,6 +99,8 @@ extern uint8_t CAN2_DATA_RX[8];
 extern uint8_t Flg_Consecutive;
 
 extern unsigned int TimeStamp;
+extern volatile uint8_t g_CAN1_RxFlag;
+extern volatile uint8_t g_UartCanLogEnabled;
 
 extern void USART3_SendString(uint8_t *ch);
 void PrintCANLog(uint16_t CANID, uint8_t * CAN_Frame);

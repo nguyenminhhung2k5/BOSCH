@@ -47,6 +47,16 @@ void Dcm_ProcessUART(void);
 uint16_t Dcm_GetCurrentCANID(void);
 
 /**
+ * @brief Lấy CAN ID đang chờ áp dụng sau chu trình đánh lửa (DID 0x0123 qua service 0x2E)
+ */
+uint16_t Dcm_GetPendingCANID(void);
+
+/**
+ * @brief Lấy giá trị nhiệt độ hiện tại tính từ cảm biến ADC (°C)
+ */
+uint8_t Dcm_GetTemperature(void);
+
+/**
  * @brief Lưu CAN ID mới được ghi bởi service 0x2E (chờ Ignition cycle)
  */
 void Dcm_SetNewCANIDPending(uint16_t newId);

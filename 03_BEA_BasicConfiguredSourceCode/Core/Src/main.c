@@ -21,8 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "lcd_28inch.h"
+#include "lcd.h"
 #include "dcm.h"
+#include "can_comm.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -107,9 +108,11 @@ void delay(uint16_t delay);
  * Tăng từ 0x0 đến 0xF rồi quay lại 0x0
  * ====================================================== */
 uint8_t node1_tx_counter = 0;
-uint8_t latest_node2_val0 = 0;
-uint8_t latest_node2_val1 = 0;
+uint8_t latest_node2_val0 = 0x22;
+uint8_t latest_node2_val1 = 0x33;
+uint8_t latest_node2_cnt  = 0x00;
 uint32_t last_can1_tx_time = 0;
+volatile uint8_t g_UartCanLogEnabled = 1;
 
 /* ======================================================
  * Hàm tính Checksum theo chuẩn CRC-8 SAE J1850
@@ -184,18 +187,20 @@ int main(void)
   MX_CAN2_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  MX_CAN1_Setup();
-  MX_CAN2_Setup();
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)g_TemperatureSensorRawValue_u16, 1);
-
-  /* Khởi tạo phân hệ chẩn đoán UDS DCM */
-  Dcm_Init();
-  HAL_UART_Receive_IT(&huart3, &REQ_1BYTE_DATA, 1);
-
-  /* Khởi tạo màn hình LCD 2.8 inch và giao diện giám sát CAN Monitor */
+  /* 1. Khởi tạo màn hình LCD 2.8" (ST7789) và khóa Touch Controller XPT2046 */
   LCD_Init();
   LCD_Init_UI();
-  LCD_Switch_To_CAN2(); /* Khôi phục chân PB6 về CAN2_TX sau khi LCD_Init cấu hình làm LCD_BL */
+  LCD_Switch_To_CAN2(); /* Khôi phục chân PB6 về CAN2_TX (đèn nền LCD vẫn sáng ổn định) */
+
+  /* 2. Khởi tạo CAN1 (Communication) & CAN2 (Diagnostic UDS) */
+  MX_CAN1_Setup();
+  MX_CAN2_Setup();
+  CanComm_Init();
+
+  /* 3. Khởi tạo ADC DMA cảm biến nhiệt độ & DCM */
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)g_TemperatureSensorRawValue_u16, 1);
+  Dcm_Init();
+  HAL_UART_Receive_IT(&huart3, (uint8_t *)&REQ_1BYTE_DATA, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -209,6 +214,18 @@ int main(void)
 
     /* Xử lý định kỳ DCM (Security Access timers, LED PB0, UDS packet qua UART & CAN) */
     Dcm_MainFunction();
+
+    /* ============================================================
+     * [NODE 2 SIMULATOR] - CAN2 tự phát bản tin 0x0A2 mỗi 20ms
+     * Theo đúng bảng chuẩn Bosch: Frame cycle của 0x0A2 là 20ms!
+     * CAN1 sẽ nhận bản tin này qua bus CAN vật lý chung trên Open405R-C.
+     * ============================================================ */
+    static uint32_t last_node2_tx_time = 0;
+    if (TimeStamp - last_node2_tx_time >= 20)
+    {
+      last_node2_tx_time += 20;
+      CanComm_Task_Node2_20ms();
+    }
 
     /* ============================================================
      * [NODE 1 - COMMUNICATION]
@@ -226,19 +243,25 @@ int main(void)
         /* Cập nhật giá trị mới nhất nhận từ Node 2 */
         latest_node2_val0 = CAN1_DATA_RX[0];
         latest_node2_val1 = CAN1_DATA_RX[1];
+        latest_node2_cnt  = CAN1_DATA_RX[7]; /* Byte 7: Message counter theo bảng chuẩn Bosch */
 
-        /* In log bản tin 0A2 vừa nhận ra UART (chỉ in khi không có phiên chẩn đoán UDS) */
-        if (!Dcm_IsDiagActive())
+        /* In log bản tin 0A2 vừa nhận ra UART (mỗi chu kỳ 20ms theo đề bài) */
+        if (g_UartCanLogEnabled && !Dcm_IsDiagActive())
         {
           PrintCANLog(CAN1_pHeaderRx.StdId, CAN1_DATA_RX);
         }
 
-        /* Cập nhật LCD giãn cách để không làm trễ chu kỳ phát 50ms của CAN */
-        static uint32_t last_lcd_rx_time = 0;
-        if (TimeStamp - last_lcd_rx_time >= 100)
+        /* Ghi log bản tin RX vào vùng Log Recording trên LCD */
+        static uint32_t last_log_rx_time = 0;
+        if (TimeStamp - last_log_rx_time >= 50)
         {
-          last_lcd_rx_time = TimeStamp;
-          //LCD_DisplayCANLog(CAN1_pHeaderRx.StdId, CAN1_DATA_RX, 1);
+          last_log_rx_time = TimeStamp;
+          char log_rx[40];
+          snprintf(log_rx, sizeof(log_rx), "RX %03X: %02X %02X %02X %02X %02X %02X %02X %02X",
+                   (unsigned int)CAN1_pHeaderRx.StdId,
+                   CAN1_DATA_RX[0], CAN1_DATA_RX[1], CAN1_DATA_RX[2], CAN1_DATA_RX[3],
+                   CAN1_DATA_RX[4], CAN1_DATA_RX[5], CAN1_DATA_RX[6], CAN1_DATA_RX[7]);
+          LCD_AddLogRecord(log_rx, LCD_COLOR_CYAN);
         }
       }
     }
@@ -253,12 +276,15 @@ int main(void)
     {
       last_can1_tx_time += 50; /* Cố định chu kỳ 50ms, chống trôi thời gian (drift) */
 
+      /* Lấy CAN ID hiện hành (0x012 hoặc ID mới được ghi qua DID 0x0123) */
+      CAN1_pHeader.StdId = Dcm_GetCurrentCANID();
+
       /* Byte 0, 1: Dữ liệu mới nhất từ Node 2 */
       CAN1_DATA_TX[0] = latest_node2_val0;
       CAN1_DATA_TX[1] = latest_node2_val1;
 
       /* Byte 2: Tổng Byte0 + Byte1 */
-      CAN1_DATA_TX[2] = latest_node2_val0 + latest_node2_val1;
+      CAN1_DATA_TX[2] = (uint8_t)(latest_node2_val0 + latest_node2_val1);
 
       /* Byte 3, 4, 5: Điền 0x00 */
       CAN1_DATA_TX[3] = 0x00;
@@ -274,37 +300,78 @@ int main(void)
       /* Gửi bản tin 0x012 qua CAN1 về Node 2 */
       HAL_CAN_AddTxMessage(&hcan1, &CAN1_pHeader, CAN1_DATA_TX, &CAN1_pTxMailbox);
 
+      /* In log bản tin 012 vừa phát ra UART để hiển thị trên Hercules (mỗi chu kỳ 50ms theo đề bài) */
+      if (g_UartCanLogEnabled && !Dcm_IsDiagActive())
+      {
+        PrintCANLog(CAN1_pHeader.StdId, CAN1_DATA_TX);
+      }
+
+      /* Node 2 thẩm định bản tin từ Node 1 (điều khiển LED PC4 kiểm chứng) */
+      CanComm_Node2_VerifyResponse(CAN1_DATA_TX);
+
+      /* Ghi log bản tin TX vào vùng Log Recording trên LCD (chu kỳ 50ms) */
+      static uint32_t last_log_tx_time = 0;
+      if (TimeStamp - last_log_tx_time >= 50)
+      {
+        last_log_tx_time = TimeStamp;
+        char log_tx[40];
+        snprintf(log_tx, sizeof(log_tx), "TX %03X: %02X %02X %02X %02X %02X %02X %02X %02X",
+                 (unsigned int)CAN1_pHeader.StdId,
+                 CAN1_DATA_TX[0], CAN1_DATA_TX[1], CAN1_DATA_TX[2], CAN1_DATA_TX[3],
+                 CAN1_DATA_TX[4], CAN1_DATA_TX[5], CAN1_DATA_TX[6], CAN1_DATA_TX[7]);
+        LCD_AddLogRecord(log_tx, LCD_COLOR_GREEN);
+      }
+
       /* Cập nhật Rolling Counter */
       node1_tx_counter = (node1_tx_counter + 1) & 0x0F;
-
-      /* In log bản tin 012: Tạm tắt in ra UART mỗi 50ms để không làm rác/lag terminal của tool chẩn đoán BEA_DiagChecker.
-       * (Dữ liệu giao tiếp CAN vẫn được phát đều đặn mỗi 50ms qua CAN1 và hiển thị trên màn hình LCD) */
-      /* PrintCANLog(CAN1_pHeader.StdId, CAN1_DATA_TX); */
-
-      /* Cập nhật LCD giãn cách */
-      static uint32_t last_lcd_tx_time = 0;
-      if (TimeStamp - last_lcd_tx_time >= 100)
-      {
-        last_lcd_tx_time = TimeStamp;
-        LCD_DisplayCANLog(CAN1_pHeader.StdId, CAN1_DATA_TX, 0);
-      }
     }
 
-    /* Giả lập IG OFF -> IG ON: Chấp nhận bất kỳ nút nhấn hoặc hướng Joystick nào (BtnU, BtnA, BtnB, BtnC, BtnD, BtnM, PA0/Wakeup) */
-    if (!BtnU || !BtnA || !BtnB || !BtnC || !BtnD || !BtnM || HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET)
+    /* ============================================================
+     * [LCD PORTRAIT DASHBOARD]
+     * Cập nhật giao diện màn hình dọc (Portrait) mỗi 150ms
+     * Hiển thị chuẩn theo giao diện Demo Bosch:
+     * - Bài 1: RX 0xA2, TX 012, CRC-8
+     * - Bài 2: ADC Temp, Security Status (RED/GREEN), Pending ID
+     * ============================================================ */
+    static uint32_t last_lcd_update_time = 0;
+    if (TimeStamp - last_lcd_update_time >= 150)
     {
-      delay(20);
+      last_lcd_update_time = TimeStamp;
+      LCD_Update_Portrait_UI(latest_node2_val0,
+                             latest_node2_val1,
+                             latest_node2_cnt,
+                             CAN1_pHeader.StdId,
+                             CAN1_DATA_TX[0],
+                             CAN1_DATA_TX[1],
+                             CAN1_DATA_TX[2],
+                             CAN1_DATA_TX[6]);
+    }
+
+    /* 1. Nút Joystick Center (BtnM - PC13): Bật/Tắt UART CAN Log (Hercules <-> Diag Tool) */
+    static uint8_t s_last_btn_m = 1;
+    uint8_t cur_btn_m = BtnM;
+    if (s_last_btn_m == 1 && cur_btn_m == 0)
+    {
+      g_UartCanLogEnabled = !g_UartCanLogEnabled;
+      delay(20); /* Debounce 20ms */
+    }
+    s_last_btn_m = cur_btn_m;
+
+    /* 2. Giả lập IG OFF -> IG ON: CHỈ DUY NHẤT NÚT USER (PA0) theo đúng yêu cầu đề bài */
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET)
+    {
+      delay(20); /* Debounce 20ms */
       USART3_SendString((uint8_t *)"IG OFF ");
-      while (!BtnU || !BtnA || !BtnB || !BtnC || !BtnD || !BtnM || HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET);
+      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET);
+      delay(20); /* Debounce 20ms */
+      Dcm_ApplyIgnitionCycle();
       MX_CAN1_Setup();
       MX_CAN2_Setup();
-      Dcm_ApplyIgnitionCycle();
       USART3_SendString((uint8_t *)"--> IG ON (Applied Configured CAN ID)\r\n");
-      delay(20);
     }
   }
 
-  memset(&REQ_BUFFER,0x00,4096);
+  memset((void *)REQ_BUFFER, 0x00, sizeof(REQ_BUFFER));
   NumBytesReq = 0;
 
   /* USER CODE END 3 */
@@ -687,6 +754,10 @@ void USART3_SendString(uint8_t *ch)
 
 void PrintCANLog(uint16_t CANID, uint8_t * CAN_Frame)
 {
+	if (!g_UartCanLogEnabled)
+	{
+		return;
+	}
 	char log_buf[80];
 	sprintf(log_buf, "%u %03X: %02X %02X %02X %02X %02X %02X %02X %02X \r\n",
 			TimeStamp, CANID,
@@ -698,6 +769,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if (huart->Instance == USART3)
 	{
+		/* Tự động tắt UART CAN Log ngay khi có byte chẩn đoán UDS từ PC gửi xuống */
+		if (g_UartCanLogEnabled)
+		{
+			g_UartCanLogEnabled = 0;
+		}
+
 		if (NumBytesReq < sizeof(REQ_BUFFER) - 1)
 		{
 			REQ_BUFFER[NumBytesReq++] = REQ_1BYTE_DATA;

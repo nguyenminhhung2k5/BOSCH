@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "dcm.h"
+#include "can_comm.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -243,6 +244,7 @@ void CAN1_RX0_IRQHandler(void)
     else
     {
       g_CAN1_RxFlag = 1; /* Báo cho main() biết có bản tin Communication (0x0A2) */
+      CanComm_Node1_OnMsgReceived(CAN1_DATA_RX);
     }
   }
   /* USER CODE END CAN1_RX0_IRQn 1 */
@@ -264,6 +266,11 @@ void CAN2_RX0_IRQHandler(void)
     {
       /* Yêu cầu chẩn đoán UDS (ID 0x712) nhận từ CAN1 qua mạng CAN vật lý */
       Dcm_OnCAN2RequestReceived(CAN2_DATA_RX, CAN2_pHeaderRx.DLC);
+    }
+    else if (CAN2_pHeaderRx.StdId == CAN_COMM_ID_PRACTICE_TX)
+    {
+      /* Node 2 nhận bản tin 0x012 từ Node 1: Kiểm chứng Byte2 và CRC-8 */
+      CanComm_Node2_VerifyResponse(CAN2_DATA_RX);
     }
   }
   /* USER CODE END CAN2_RX0_IRQn 1 */
